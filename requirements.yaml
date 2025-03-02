@@ -1,0 +1,20 @@
+name: small-language-model
+channels:
+    - pytorch
+    - nvidia
+    - defaults
+    - anaconda
+dependencies:
+    - python=3.10
+    - tqdm
+    - numpy<2.0.0
+    - pytorch=2.5.1
+    - torchtext
+    - pytorch-cuda=12.4
+    - tensorboard
+    - chardet
+    - pandas
+    - pip
+    - pyparsing
+    - pip:
+        - pillow-simd
