@@ -2,6 +2,8 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 from datetime import timedelta
+from torchtext.vocab import GloVe
+from torchtext.data.utils import get_tokenizer
 
 class DiscordDataset(Dataset):
     def __init__(self, csv_file, time_threshold=300, tokenizer=None, vocab=None, max_seq_length=512):
@@ -9,16 +11,16 @@ class DiscordDataset(Dataset):
         Args:
             csv_file (str): Path to the CSV file with discord messages.
             time_threshold (int): Time gap (in seconds) to separate conversations.
-            tokenizer (callable): Function to split text into tokens; defaults to whitespace split.
-            vocab (dict): Optional vocabulary mapping tokens to indices; if None, one will be built.
+            tokenizer (callable): Tokenizer function; defaults to torchtext's basic_english tokenizer.
+            vocab (dict): Optional vocabulary mapping tokens to indices; if None, GloVe is used.
             max_seq_length (int): Maximum sequence length.
         """
         self.data = pd.read_csv(csv_file)
-        # Ensure the 'time' column is parsed as datetime
+        # Parse and sort by time.
         self.data['time'] = pd.to_datetime(self.data['time'])
         self.data.sort_values(by='time', inplace=True)
         self.time_threshold = timedelta(seconds=time_threshold)
-        self.tokenizer = tokenizer if tokenizer is not None else lambda x: x.split()
+        self.tokenizer = tokenizer if tokenizer is not None else get_tokenizer('basic_english')
         self.max_seq_length = max_seq_length
 
         # Group messages into conversations based on time gaps.
@@ -51,22 +53,20 @@ class DiscordDataset(Dataset):
         return conversations
 
     def build_vocab(self, conversations):
-        from collections import Counter
-        counter = Counter()
-        # Define special tokens. Assume index 0 is <pad>.
+        # Use pre-trained GloVe vectors from torchtext.
+        glove = GloVe(name='840B', dim=300)
+        # Start with special tokens.
         special_tokens = ['<pad>', '<unk>', '<bos>', '<eos>']
-        for conv in conversations:
-            # For simplicity, only use conversations with at least two participants.
-            usernames = list({row['username'] for row in conv})
-            if len(usernames) < 2:
-                continue
-            for row in conv:
-                tokens = self.tokenizer(row['message'])
-                counter.update(tokens)
-        vocab = {token: idx for idx, token in enumerate(special_tokens)}
-        for token, _ in counter.items():
+        vocab = {}
+        for token in special_tokens:
+            vocab[token] = len(vocab)
+        # Add tokens from GloVe vocabulary.
+        # Note: glove.stoi is a dictionary mapping token to index.
+        for token in glove.stoi.keys():
             if token not in vocab:
                 vocab[token] = len(vocab)
+        # Store the GloVe object in case pretrained vectors are needed later.
+        self.glove = glove
         return vocab
 
     def process_conversations(self):
@@ -92,7 +92,7 @@ class DiscordDataset(Dataset):
                 # Format: <bos> ROLE: message <eos>
                 conversation_text += f"<bos> {role}: {row['message']} <eos> "
             tokens = self.tokenizer(conversation_text)
-            # Convert tokens to indices (use <unk> for unknown tokens).
+            # Convert tokens to indices using the vocabulary. Use <unk> if token not found.
             token_ids = [self.vocab.get(token, self.vocab['<unk>']) for token in tokens]
             # Truncate to max sequence length.
             if len(token_ids) > self.max_seq_length:
@@ -121,9 +121,3 @@ class DiscordDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.samples[idx]
-
-# For conversation data, consider using publicly available datasets.
-# For example:
-#  - Cornell Movie Dialogs Corpus: https://www.cs.cornell.edu/~cristian/Cornell_Movie-Dialogs_Corpus.html
-#  - Persona-Chat Dataset: https://github.com/facebookresearch/ParlAI/tree/main/projects/convai2
-# These datasets provide conversational exchanges that can be used for training chat models.
